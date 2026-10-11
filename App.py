@@ -1,52 +1,99 @@
 import streamlit as st
 
-# Configuración de la página para dispositivos móviles
-st.set_page_config(page_title="Mis Finanzas", page_icon="💰", layout="centered")
+# Configuración de la página
+st.set_page_config(page_title="Mis Finanzas V2", page_icon="📊", layout="centered")
 
-st.title("💰 Control de Finanzas")
-st.write("Gestiona tus ingresos, sueldo, horas extras y gastos mensuales de forma sencilla.")
+st.title("📊 Dashboard Financiero")
+st.markdown("Gestión estratégica de ingresos, costos operativos y estilo de vida.")
 
-# --- SECCIÓN 1: INGRESOS ---
-st.header("1. Ingresos Mensuales")
-sueldo_base = st.number_input("Sueldo Base ($)", min_value=0.0, value=0.0, step=1000.0)
-horas_extras = st.number_input("Monto por Horas Extras ($)", min_value=0.0, value=0.0, step=500.0)
+# Creación de pestañas para navegación móvil óptima
+tab_ingresos, tab_fijos, tab_movilidad, tab_vida, tab_balance = st.tabs([
+    "Ingresos", "Fijos", "Movilidad", "Estilo de Vida", "Balance"
+])
 
-total_ingresos = sueldo_base + horas_extras
-st.success(f"**Total Ingresos:** ${total_ingresos:,.2f}")
+# --- PESTAÑA 1: INGRESOS ---
+with tab_ingresos:
+    st.header("💰 Ingresos Mensuales")
+    sueldo_base = st.number_input("Sueldo Base Líquido ($)", min_value=0.0, step=10000.0)
+    turnos_extras = st.number_input("Turnos Adicionales / Horas Extras ($)", min_value=0.0, step=5000.0)
+    bonos = st.number_input("Bonos / Otros Ingresos ($)", min_value=0.0, step=5000.0)
+    
+    total_ingresos = sueldo_base + turnos_extras + bonos
+    st.success(f"**Ingresos Totales:** ${total_ingresos:,.0f}")
 
-# --- SECCIÓN 2: GASTOS FIJOS NECESARIOS ---
-st.header("2. Gastos Fijos Mensuales")
+# --- PESTAÑA 2: GASTOS FIJOS (SUPERVIVENCIA) ---
+with tab_fijos:
+    st.header("🏠 Costos Operativos Base")
+    arriendo = st.number_input("Arriendo / Dividendo ($)", min_value=0.0, step=10000.0)
+    gastos_comunes = st.number_input("Gastos Comunes ($)", min_value=0.0, step=5000.0)
+    cuentas = st.number_input("Cuentas Básicas (Luz, Agua, Gas, Internet) ($)", min_value=0.0, step=2000.0)
+    supermercado = st.number_input("Supermercado y Aseo ($)", min_value=0.0, step=5000.0)
+    
+    total_fijos = arriendo + gastos_comunes + cuentas + supermercado
+    st.info(f"**Total Fijos:** ${total_fijos:,.0f}")
 
-arriendo = st.number_input("Arriendo ($)", min_value=0.0, value=0.0, step=500.0)
-alimentacion = st.number_input("Alimentación / Supermercado ($)", min_value=0.0, value=0.0, step=500.0)
-bencina = st.number_input("Bencina / Combustible ($)", min_value=0.0, value=0.0, step=500.0)
-cuentas_basicas = st.number_input("Cuentas Básicas (Luz, Agua, Gas, Internet) ($)", min_value=0.0, value=0.0, step=500.0)
-gastos_comunes = st.number_input("Gastos Comunes ($)", min_value=0.0, value=0.0, step=500.0)
-seguro_auto = st.number_input("Seguro de Auto ($)", min_value=0.0, value=0.0, step=500.0)
+# --- PESTAÑA 3: MOVILIDAD (VEHÍCULO) ---
+with tab_movilidad:
+    st.header("🚗 Vehículo y Transporte")
+    bencina = st.number_input("Bencina ($)", min_value=0.0, step=5000.0)
+    seguro_auto = st.number_input("Seguro Automotriz ($)", min_value=0.0, step=1000.0)
+    tag_peajes = st.number_input("TAG y Peajes ($)", min_value=0.0, step=1000.0)
+    mantenimiento = st.number_input("Fondo Mantenimiento / Estacionamiento ($)", min_value=0.0, step=2000.0)
+    
+    total_movilidad = bencina + seguro_auto + tag_peajes + mantenimiento
+    st.info(f"**Total Movilidad:** ${total_movilidad:,.0f}")
 
-total_fijos = arriendo + alimentacion + bencina + cuentas_basicas + gastos_comunes + seguro_auto
-st.info(f"**Total Gastos Fijos:** ${total_fijos:,.2f}")
+# --- PESTAÑA 4: ESTILO DE VIDA Y OTROS ---
+with tab_vida:
+    st.header("☕ Estilo de Vida y Desarrollo")
+    mascota = st.number_input("Mascota (Comida gato, arena, vet) ($)", min_value=0.0, step=2000.0)
+    ocio = st.number_input("Salidas, Bares, Restaurantes, Citas ($)", min_value=0.0, step=5000.0)
+    cuidado_personal = st.number_input("Cuidado Personal (Barbería, Ropa) ($)", min_value=0.0, step=2000.0)
+    suscripciones = st.number_input("Suscripciones (Netflix, Spotify, Gym) ($)", min_value=0.0, step=1000.0)
+    salud = st.number_input("Salud / Autocuidado ($)", min_value=0.0, step=5000.0)
+    imprevistos = st.number_input("Fondo Imprevistos del Mes ($)", min_value=0.0, step=5000.0)
+    
+    total_vida = mascota + ocio + cuidado_personal + suscripciones + salud + imprevistos
+    st.info(f"**Total Estilo de Vida:** ${total_vida:,.0f}")
 
-# --- SECCIÓN 3: GASTOS EMERGENTES ---
-st.header("3. Gastos Emergentes / Imprevistos")
-gastos_emergentes = st.number_input("Monto en Gastos Emergentes del Mes ($)", min_value=0.0, value=0.0, step=500.0)
+# --- PESTAÑA 5: BALANCE Y MÉTRICAS ---
+with tab_balance:
+    st.header("📈 Resumen del Mes")
+    
+    total_gastos = total_fijos + total_movilidad + total_vida
+    flujo_caja = total_ingresos - total_gastos
+    
+    # KPIs Financieros
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Total Ingresos", f"${total_ingresos:,.0f}")
+        st.metric("Total Gastos", f"${total_gastos:,.0f}")
+    with col2:
+        st.metric("Flujo de Caja (Disponible)", f"${flujo_caja:,.0f}")
+        
+        # Calcular porcentaje de gasto sobre ingreso (evitar división por cero)
+        if total_ingresos > 0:
+            porcentaje_gasto = (total_gastos / total_ingresos) * 100
+            st.metric("Nivel de Gasto", f"{porcentaje_gasto:.1f}%", delta_color="inverse")
+        else:
+            st.metric("Nivel de Gasto", "0%")
 
-# --- RESUMEN FINAL ---
-st.header("📊 Balance del Mes")
-total_gastos = total_fijos + gastos_emergentes
-balance = total_ingresos - total_gastos
-
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("Total Ingresos", f"${total_ingresos:,.2f}")
-with col2:
-    st.metric("Total Gastos", f"${total_gastos:,.2f}")
-
-st.divider()
-
-if balance > 0:
-    st.success(f"¡Vas bien! Te quedan **${balance:,.2f}** disponibles para ahorro o libre disposición.")
-elif balance == 0:
-    st.warning("Estás con saldo exacto (Ingresos igualan a los gastos).")
-else:
-    st.error(f"¡Atención! Tienes un déficit de **${abs(balance):,.2f}**. Los gastos superan los ingresos.")
+    st.divider()
+    
+    # Análisis de Salud Financiera
+    st.subheader("Diagnóstico")
+    if total_ingresos == 0:
+        st.write("Registra tus ingresos para ver el diagnóstico.")
+    elif flujo_caja > 0:
+        st.success(f"**Excelente.** Tienes un excedente de **${flujo_caja:,.0f}**. Ideal para destinarlo a ahorro, inversión o proyectos personales.")
+        
+        # Regla 50/30/20 simplificada
+        if porcentaje_gasto <= 80:
+            st.write("Tus finanzas están sanas. Mantienes un buen margen de maniobra.")
+        else:
+            st.warning("Cuidado: Estás gastando una gran parte de tus ingresos. Revisa tus gastos de estilo de vida.")
+            
+    elif flujo_caja == 0:
+        st.warning("Estás en el punto de equilibrio exacto. Cualquier imprevisto te dejará en números rojos.")
+    else:
+        st.error(f"**Alerta:** Tienes un déficit de **${abs(flujo_caja):,.0f}**. Estás financiando tu mes con deuda o ahorros previos.")
