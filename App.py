@@ -12,7 +12,6 @@ import re
 # --- 1. CONFIGURACIÓN DE PÁGINA Y UI ---
 st.set_page_config(page_title="Finanzas Pro | Hub", page_icon="🏦", layout="wide", initial_sidebar_state="expanded")
 
-# Inyección de CSS para diseño bancario moderno
 st.markdown("""
     <style>
     .stMetric {background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #e9ecef;}
@@ -27,32 +26,27 @@ def clp(valor):
     except: return "$0"
 
 def limpiar_numero(val):
-    """Sanitizador nivel bancario: Destruye cualquier formato de texto y devuelve un entero puro."""
     if pd.isna(val) or val is None or val == '': return 0
     if isinstance(val, (int, float)): return int(val)
     
     val_str = str(val).strip()
     if not val_str: return 0
     
-    # Manejo de negativos financieros ej: (1500) -> -1500
     is_negative = val_str.startswith('-') or (val_str.startswith('(') and val_str.endswith(')'))
-    
-    # Dejar solo números, comas y puntos
     val_str = re.sub(r'[^\d.,]', '', val_str)
     if not val_str: return 0
     
-    # Detección heurística de decimales chilenos vs internacionales
     if ',' in val_str and '.' in val_str:
         if val_str.rfind(',') > val_str.rfind('.'):
-            val_str = val_str.replace('.', '').replace(',', '.') # Coma es decimal
+            val_str = val_str.replace('.', '').replace(',', '.')
         else:
-            val_str = val_str.replace(',', '') # Punto es decimal
+            val_str = val_str.replace(',', '')
     elif ',' in val_str:
-        if len(val_str.split(',')[-1]) != 3: val_str = val_str.replace(',', '.') # Probable decimal
-        else: val_str = val_str.replace(',', '') # Miles
+        if len(val_str.split(',')[-1]) != 3: val_str = val_str.replace(',', '.')
+        else: val_str = val_str.replace(',', '')
     elif '.' in val_str:
         if len(val_str.split('.')[-1]) == 3 and val_str.count('.') == 1:
-            val_str = val_str.replace('.', '') # Miles chilenos
+            val_str = val_str.replace('.', '')
             
     try: 
         num = int(float(val_str))
@@ -93,7 +87,7 @@ col_historial = db.collection("historial_meses")
 col_bancos = db.collection("historial_bancos")
 col_config = db.collection("configuracion")
 
-# --- 5. ESTRUCTURA FIJA DE CUENTAS (Bancos Solicitados) ---
+# --- 5. ESTRUCTURA FIJA DE CUENTAS ---
 categorias_default = {
     "Ingresos": ["Sueldo COSAM", "Turnos Extras", "Bonos / Aguinaldos", "Otros"],
     "Gastos Fijos": ["Arriendo / Dividendo", "Gastos Comunes", "Cuentas Básicas", "Supermercado (Base)", "Seguros"],
@@ -113,7 +107,6 @@ presupuesto_base = doc_presup.to_dict() if doc_presup.exists else {}
 doc_tc = col_config.document("deudas_tc").get()
 compras_cuotas = doc_tc.to_dict() if doc_tc.exists else {}
 
-# Cache de datos masivos para evitar lecturas excesivas
 data_flujo = {doc.id: doc.to_dict() for doc in col_historial.stream()}
 data_bancos = {doc.id: doc.to_dict() for doc in col_bancos.stream()}
 
@@ -139,7 +132,7 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
     st.markdown("<h1 class='titulo-banco'>📊 Panel Ejecutivo de Finanzas</h1>", unsafe_allow_html=True)
     
     if not data_flujo:
-        st.info("👋 Bienvenido. Registra tu primer mes o sube tu Excel en 'Motor de Datos' para iniciar.")
+        st.info("👋 Bienvenido. Registra tu mes o sube tu Excel en 'Motor de Datos'.")
     else:
         meses_disp = sorted(data_flujo.keys(), key=mes_a_fecha)
         mes_sel = st.selectbox("📅 Seleccionar Período Fiscal", meses_disp, index=len(meses_disp)-1)
@@ -147,22 +140,15 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
         d_mes = data_flujo[mes_sel]
         d_banco = data_bancos.get(mes_sel, {})
         
-        # Matemáticas puras
         ingresos = sum(limpiar_numero(d_mes.get(c, 0)) for c in categorias["Ingresos"])
         fijos = sum(limpiar_numero(d_mes.get(c, 0)) for c in categorias["Gastos Fijos"])
         emergentes = sum(limpiar_numero(d_mes.get(c, 0)) for c in categorias["Gastos Emergentes"])
-        
-        # Pagos de Tarjeta de Crédito (La fuga real)
         pago_tc = sum(limpiar_numero(d_banco.get(f"{tar}_ingresos", 0)) for tar in bancos_fijos["Crédito"])
         
         egresos_totales = fijos + emergentes + pago_tc
         flujo_neto = ingresos - egresos_totales
-        
-        # KPIs Bancarios
-        tasa_ahorro = (flujo_neto / ingresos * 100) if ingresos > 0 else 0
         carga_financiera = (pago_tc / ingresos * 100) if ingresos > 0 else 0
         
-        # Renderizado de Tarjetas Superior
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Ingresos Netos", clp(ingresos))
         c2.metric("📉 Salida de Efectivo", clp(egresos_totales))
@@ -170,8 +156,6 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
         c4.metric("📊 Carga de Deuda", f"{carga_financiera:.1f}%", delta="Riesgo" if carga_financiera > 30 else "Sano", delta_color="inverse")
         
         st.markdown("---")
-        
-        # Gráficos de Alto Nivel
         col_g1, col_g2 = st.columns([1, 1.5])
         
         with col_g1:
@@ -180,7 +164,6 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
                 'Concepto': ['Costo de Vida (Fijos)', 'Estilo de Vida (Emergentes)', 'Pago de Deudas (TC)'],
                 'Monto': [fijos, emergentes, pago_tc]
             })
-            # Filtramos los que tienen 0 para no ensuciar el gráfico
             df_pie = df_pie[df_pie['Monto'] > 0]
             if not df_pie.empty:
                 fig_pie = px.pie(df_pie, values='Monto', names='Concepto', hole=0.5, color_discrete_sequence=['#2C3E50', '#E74C3C', '#F39C12'])
@@ -193,7 +176,7 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
         with col_g2:
             st.subheader("Histórico de Flujo de Caja")
             hist_datos = []
-            for m in meses_disp[-6:]: # Últimos 6 meses para no saturar
+            for m in meses_disp[-6:]:
                 _dm = data_flujo[m]
                 _db = data_bancos.get(m, {})
                 _i = sum(limpiar_numero(_dm.get(c, 0)) for c in categorias["Ingresos"])
@@ -210,12 +193,11 @@ if menu == "📊 Panel Ejecutivo (Dashboard)":
                 st.plotly_chart(fig_bar, use_container_width=True)
 
 # ==========================================
-# MÓDULO 2: POSICIÓN BANCARIA (LIBRO MAYOR)
+# MÓDULO 2: POSICIÓN BANCARIA
 # ==========================================
 elif menu == "🏦 Posición Bancaria":
     st.markdown("<h1 class='titulo-banco'>🏦 Consolidado Bancario</h1>", unsafe_allow_html=True)
     
-    # Cálculos Automáticos de Saldos
     saldos_actuales = {}
     for cta in bancos_fijos["Débito"]:
         ing = sum(limpiar_numero(m.get(f"{cta}_ingresos", 0)) for m in data_bancos.values())
@@ -227,7 +209,6 @@ elif menu == "🏦 Posición Bancaria":
         compras = sum(limpiar_numero(m.get(f"{tar}_egresos", 0)) for m in data_bancos.values())
         saldos_actuales[tar] = compras - pagos
 
-    # Mostrar Saldos
     st.subheader("Liquidez Real (Efectivo Disponible)")
     col_e, col_c = st.columns(2)
     with col_e:
@@ -243,8 +224,6 @@ elif menu == "🏦 Posición Bancaria":
         st.warning(f"**🌎 TC Chile Internacional:** {clp(saldos_actuales['TC Banco de Chile (Internacional)'])}")
 
     st.markdown("---")
-    
-    # Registro Manual del Mes
     with st.expander("📝 Registrar Abonos y Cargos Mensuales", expanded=False):
         c_m, c_a = st.columns(2)
         m_banco = c_m.selectbox("Mes de Cartola", meses_lista, index=mes_actual_idx)
@@ -267,15 +246,14 @@ elif menu == "🏦 Posición Bancaria":
 
         if st.button("💾 Procesar Cartolas", type="primary"):
             col_bancos.document(key_banco).set(db_mes)
-            st.success("Saldos actualizados. La matemática del libro mayor se ha recalculado.")
+            st.success("Saldos actualizados.")
             st.rerun()
 
 # ==========================================
-# MÓDULO 3: LIBRO DIARIO (FLUJO)
+# MÓDULO 3: LIBRO DIARIO
 # ==========================================
 elif menu == "📝 Libro Diario (Mes)":
     st.markdown("<h1 class='titulo-banco'>📝 Flujo Diario</h1>", unsafe_allow_html=True)
-    st.write("Registra tus movimientos. Este es el corazón de tu presupuesto.")
     
     c_m, c_a = st.columns(2)
     m_flujo = c_m.selectbox("Mes", meses_lista, index=mes_actual_idx)
@@ -297,7 +275,7 @@ elif menu == "📝 Libro Diario (Mes)":
                     
     if st.button("💾 Asentar Entradas", type="primary", use_container_width=True):
         col_historial.document(key_flujo).set(d_flujo)
-        st.success("Registros guardados en Firestore.")
+        st.success("Registros guardados.")
         st.rerun()
 
 # ==========================================
@@ -317,7 +295,6 @@ elif menu == "🔮 Proyección de Deudas":
         
         for idx, nombre_mes in enumerate(meses_futuros):
             mes_offset = idx + 1
-            # Extraer solo las cuotas que sobreviven hasta este mes
             cuotas_activas = {k: v for k, v in compras_cuotas.items() if limpiar_numero(v['restantes']) >= mes_offset}
             deuda_mes = sum(limpiar_numero(c['cuota']) for c in cuotas_activas.values())
             
@@ -330,7 +307,8 @@ elif menu == "🔮 Proyección de Deudas":
                 'Flujo Libre Estimado': flujo_libre
             })
             
-            with st.expander(f"📌 {nombre_m} | Carga de Tarjeta: {clp(deuda_mes)}", expanded=(idx==0)):
+            # CORRECCIÓN DE LA VARIABLE 'nombre_mes' EN VEZ DE 'nombre_m'
+            with st.expander(f"📌 {nombre_mes} | Carga de Tarjeta: {clp(deuda_mes)}", expanded=(idx==0)):
                 if not cuotas_activas: st.success("¡Deuda en cero para este mes!")
                 else:
                     df_c = pd.DataFrame([{"Producto": k, "Cuota": clp(v['cuota']), "Detalle": f"Cuota {int(v['totales']) - int(v['restantes']) + mes_offset} de {v['totales']}"} for k,v in cuotas_activas.items()])
@@ -388,9 +366,8 @@ elif menu == "⚙️ Motor de Datos (Excel)":
 
     st.markdown("---")
     st.subheader("2. Cargas Masivas por Excel (.xlsx)")
-    st.info("El sistema ahora bloquea celdas vacías, comas perdidas y textos inválidos automáticamente.")
     
-    t_flujo, t_banco, t_tc = st.tabs(["📥 Libro Diario (Ingresos/Gastos)", "📥 Libro Mayor (Bancos)", "📥 Inventario de Cuotas"])
+    t_flujo, t_banco, t_tc = st.tabs(["📥 Libro Diario", "📥 Libro Mayor", "📥 Inventario de Cuotas"])
     
     with t_flujo:
         cols_flujo = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Gastos Fijos"] + categorias["Gastos Emergentes"]
@@ -403,10 +380,9 @@ elif menu == "⚙️ Motor de Datos (Excel)":
             for _, r in df_in.iterrows():
                 llave = str(r.get('Mes_Anio', '')).strip()
                 if llave and llave != 'nan':
-                    # Limpiador algorítmico trabajando en silencio
                     datos_limpios = {k: limpiar_numero(v) for k,v in r.to_dict().items() if k != 'Mes_Anio'}
                     col_historial.document(llave).set(datos_limpios)
-            st.success("Base de datos de flujo actualizada sin errores.")
+            st.success("Base de datos de flujo actualizada.")
             
     with t_banco:
         cols_banco = ["Mes_Anio"]
