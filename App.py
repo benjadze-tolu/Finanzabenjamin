@@ -12,21 +12,24 @@ st.set_page_config(page_title="Finanzas Pro", page_icon="📈", layout="wide")
 
 def clp(valor):
     try:
-        return f"${int(float(valor)):,}".replace(",", ".")
+        return f"${int(valor):,}".replace(",", ".")
     except:
         return "$0"
 
+# --- MOTOR SANITIZADOR DE NÚMEROS (SOLO ENTEROS CLP) ---
 def limpiar_numero(val):
-    if pd.isna(val) or val is None or val == '': return 0.0
-    if isinstance(val, (int, float)): return float(val)
+    if pd.isna(val) or val is None or val == '': return 0
+    if isinstance(val, (int, float)): return int(val)
     val_str = str(val).replace('$', '').replace(' ', '').strip()
-    if not val_str: return 0.0
+    if not val_str: return 0
     if ',' in val_str:
         val_str = val_str.replace('.', '').replace(',', '.')
     elif val_str.count('.') > 1 or ('.' in val_str and len(val_str.split('.')[-1]) == 3):
         val_str = val_str.replace('.', '')
-    try: return float(val_str)
-    except: return 0.0
+    try: 
+        return int(float(val_str)) # Lo pasa a float por si viene de excel con decimal, y luego fuerza a entero
+    except: 
+        return 0
 
 def convertir_a_excel(df):
     output = BytesIO()
@@ -53,7 +56,6 @@ def iniciar_firebase():
 
 db = iniciar_firebase()
 coleccion_historial = db.collection("historial_meses")
-coleccion_bancos = db.collection("bancos") # Ya no se usa para saldos estáticos, pero se mantiene por compatibilidad
 coleccion_historial_bancos = db.collection("historial_bancos")
 coleccion_config = db.collection("configuracion")
 
@@ -67,12 +69,11 @@ categorias = doc_config.to_dict() if doc_config.exists else {
 for k in categorias: categorias[k] = list(dict.fromkeys(categorias[k]))
 coleccion_config.document("categorias").set(categorias)
 
-doc_bancos_cat = coleccion_config.document("categorias_bancos").get()
-categorias_bancos = doc_bancos_cat.to_dict() if doc_bancos_cat.exists else {
-    "Débito": ["Cta. Corriente Banco de Chile", "Cta. RUT Banco Estado", "Cta. Corriente Banco Estado"], 
-    "Crédito": ["TC Banco de Chile", "TC Banco Estado"]
+# --- FIJAR EXCLUSIVAMENTE LOS BANCOS SOLICITADOS ---
+categorias_bancos = {
+    "Débito": ["Cta. Corriente Banco Estado", "Cta. Corriente Banco de Chile"], 
+    "Crédito": ["TC Banco de Chile Nacional", "TC Banco de Chile Internacional"]
 }
-for k in categorias_bancos: categorias_bancos[k] = list(dict.fromkeys(categorias_bancos[k]))
 coleccion_config.document("categorias_bancos").set(categorias_bancos)
 
 doc_presupuesto = coleccion_config.document("presupuesto_base").get()
@@ -128,10 +129,11 @@ if menu == "📝 Flujo Mensual (Registro)":
     for i, (tipo, lista_cats) in enumerate(categorias.items()):
         with tabs[i]:
             for cat in lista_cats:
-                valor_actual = limpiar_numero(datos.get(cat, 0.0))
-                meta = limpiar_numero(presupuesto_base.get(cat, 0.0))
+                valor_actual = limpiar_numero(datos.get(cat, 0))
+                meta = limpiar_numero(presupuesto_base.get(cat, 0))
                 label = f"{cat} (Presupuesto: {clp(meta)})" if meta > 0 else cat
-                datos[cat] = st.number_input(label, value=valor_actual, step=5000.0, format="%.0f", key=f"{llave_mes}_{cat}")
+                # step es int (5000) por ende el valor será int puro
+                datos[cat] = st.number_input(label, value=valor_actual, step=5000, key=f"{llave_mes}_{cat}")
                 
                 if tipo != "Ingresos" and meta > 0 and datos[cat] > meta:
                     st.error(f"⚠️ Superaste el presupuesto planificado en {clp(datos[cat] - meta)}")
@@ -144,10 +146,10 @@ if menu == "📝 Flujo Mensual (Registro)":
 elif menu == "🏦 Cuentas, Bancos y Evolución":
     st.title("🏦 Análisis de Patrimonio por Institución")
     
-    t_reg, t_bal, t_graf = st.tabs(["📝 Registrar Ingresos/Egresos", "⚖️ Balance Calculado", "📈 Evolución Histórica"])
+    t_reg, t_bal, t_graf = st.tabs(["📝 Registrar Movimientos", "⚖️ Balance Calculado", "📈 Evolución Histórica"])
     
     with t_reg:
-        st.info("No escribas tu saldo final. Anota cuánto dinero ENTRO y SALIÓ de cada cuenta este mes. El sistema calculará tu saldo.")
+        st.info("Anota el dinero que ENTRO y SALIÓ de cada cuenta este mes. El sistema consolidará tu saldo automáticamente.")
         col_m_b, col_a_b = st.columns(2)
         with col_m_b: m_sel = st.selectbox("Mes", meses, index=mes_actual, key="mb")
         with col_a_b: a_sel = st.selectbox("Año", [2025, 2026, 2027], index=1, key="ab")
@@ -155,42 +157,47 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
         
         datos_mes_banco = historial_bancos_data.get(llave_b, {})
         
-        st.subheader("Cuentas de Débito (Líquido)")
+        st.subheader("Cuentas Corrientes (Liquidez)")
         for cuenta in categorias_bancos["Débito"]:
             st.markdown(f"**{cuenta}**")
             c1, c2 = st.columns(2)
-            with c1: datos_mes_banco[f"{cuenta}_ingresos"] = st.number_input(f"Ingresos / Abonos", value=limpiar_numero(datos_mes_banco.get(f"{cuenta}_ingresos", 0)), step=10000.0, format="%.0f", key=f"{llave_b}_{cuenta}_i")
-            with c2: datos_mes_banco[f"{cuenta}_egresos"] = st.number_input(f"Egresos / Gastos", value=limpiar_numero(datos_mes_banco.get(f"{cuenta}_egresos", 0)), step=10000.0, format="%.0f", key=f"{llave_b}_{cuenta}_e")
+            with c1: datos_mes_banco[f"{cuenta}_ingresos"] = st.number_input(f"Ingresos / Abonos", value=limpiar_numero(datos_mes_banco.get(f"{cuenta}_ingresos", 0)), step=10000, key=f"{llave_b}_{cuenta}_i")
+            with c2: datos_mes_banco[f"{cuenta}_egresos"] = st.number_input(f"Egresos / Gastos", value=limpiar_numero(datos_mes_banco.get(f"{cuenta}_egresos", 0)), step=10000, key=f"{llave_b}_{cuenta}_e")
 
         st.subheader("Tarjetas de Crédito (Deuda)")
         for tarjeta in categorias_bancos["Crédito"]:
             st.markdown(f"**{tarjeta}**")
             c1, c2 = st.columns(2)
-            with c1: datos_mes_banco[f"{tarjeta}_ingresos"] = st.number_input(f"Pagos a la Tarjeta", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_ingresos", 0)), step=10000.0, format="%.0f", key=f"{llave_b}_{tarjeta}_i")
-            with c2: datos_mes_banco[f"{tarjeta}_egresos"] = st.number_input(f"Nuevas Compras", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_egresos", 0)), step=10000.0, format="%.0f", key=f"{llave_b}_{tarjeta}_e")
+            with c1: datos_mes_banco[f"{tarjeta}_ingresos"] = st.number_input(f"Pagos a la Tarjeta", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_ingresos", 0)), step=10000, key=f"{llave_b}_{tarjeta}_i")
+            with c2: datos_mes_banco[f"{tarjeta}_egresos"] = st.number_input(f"Nuevas Compras", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_egresos", 0)), step=10000, key=f"{llave_b}_{tarjeta}_e")
             
         if st.button("💾 Guardar Movimientos Bancarios", use_container_width=True):
             coleccion_historial_bancos.document(llave_b).set(datos_mes_banco)
-            st.success("¡Movimientos guardados! Ve a la pestaña 'Balance Calculado' para ver tu nuevo saldo.")
+            st.success("¡Movimientos guardados! Ve a la pestaña 'Balance Calculado' para ver tus nuevos saldos.")
             st.rerun()
 
     with t_bal:
-        st.subheader("Desglose Institucional Automático")
-        chile_liq = sum(saldos_calculados[k] for k in categorias_bancos["Débito"] if "chile" in k.lower())
-        chile_deuda = sum(saldos_calculados[k] for k in categorias_bancos["Crédito"] if "chile" in k.lower())
-        estado_liq = sum(saldos_calculados[k] for k in categorias_bancos["Débito"] if "estado" in k.lower())
-        estado_deuda = sum(saldos_calculados[k] for k in categorias_bancos["Crédito"] if "estado" in k.lower())
-        otros_liq = sum(saldos_calculados[k] for k in categorias_bancos["Débito"] if "chile" not in k.lower() and "estado" not in k.lower())
-        otros_deuda = sum(saldos_calculados[k] for k in categorias_bancos["Crédito"] if "chile" not in k.lower() and "estado" not in k.lower())
+        st.subheader("Desglose Institucional")
         
-        col_chile, col_estado, col_otros = st.columns(3)
-        with col_chile: st.info(f"**🏦 Banco de Chile**\n\nLiquidez: {clp(chile_liq)}\n\nDeuda TC: {clp(chile_deuda)}\n\n**Neto: {clp(chile_liq - chile_deuda)}**")
-        with col_estado: st.success(f"**🏦 Banco Estado**\n\nLiquidez: {clp(estado_liq)}\n\nDeuda TC: {clp(estado_deuda)}\n\n**Neto: {clp(estado_liq - estado_deuda)}**")
-        with col_otros: st.warning(f"**🏦 Otras Cuentas**\n\nLiquidez: {clp(otros_liq)}\n\nDeuda TC: {clp(otros_deuda)}\n\n**Neto: {clp(otros_liq - otros_deuda)}**")
+        # Banco Estado
+        estado_liq = saldos_calculados.get("Cta. Corriente Banco Estado", 0)
+        
+        # Banco de Chile
+        chile_liq = saldos_calculados.get("Cta. Corriente Banco de Chile", 0)
+        chile_deuda_nac = saldos_calculados.get("TC Banco de Chile Nacional", 0)
+        chile_deuda_int = saldos_calculados.get("TC Banco de Chile Internacional", 0)
+        chile_deuda_total = chile_deuda_nac + chile_deuda_int
+        
+        col_estado, col_chile = st.columns(2)
+        with col_estado: 
+            st.success(f"**🏦 Banco Estado**\n\nCuenta Corriente: {clp(estado_liq)}\n\n**Líquido Total: {clp(estado_liq)}**")
+        with col_chile: 
+            st.info(f"**🏦 Banco de Chile**\n\nCuenta Corriente: {clp(chile_liq)}\n\nDeuda TC Nacional: {clp(chile_deuda_nac)}\n\nDeuda TC Internacional: {clp(chile_deuda_int)}\n\n**Neto: {clp(chile_liq - chile_deuda_total)}**")
             
         st.divider()
-        liquidez_total = chile_liq + estado_liq + otros_liq
-        deuda_total = chile_deuda + estado_deuda + otros_deuda
+        liquidez_total = estado_liq + chile_liq
+        deuda_total = chile_deuda_total
+        
         c1, c2, c3 = st.columns(3)
         c1.metric("Activos Totales", clp(liquidez_total))
         c2.metric("Pasivos Totales", clp(deuda_total), delta="Deuda", delta_color="inverse")
@@ -200,7 +207,7 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
         if historial_bancos_data:
             meses_ordenados = sorted(historial_bancos_data.keys(), key=mes_a_fecha)
             filas_bancos = []
-            acumulados = {cta: 0.0 for cta in categorias_bancos["Débito"]}
+            acumulados = {cta: 0 for cta in categorias_bancos["Débito"]}
 
             for llave in meses_ordenados:
                 datos_banco = historial_bancos_data[llave]
@@ -213,7 +220,7 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
                 filas_bancos.append(fila)
             
             df_bancos = pd.DataFrame(filas_bancos)
-            fig_bancos = px.line(df_bancos, x='Mes', y=categorias_bancos["Débito"], markers=True, title="Evolución Acumulada de tus Cuentas")
+            fig_bancos = px.line(df_bancos, x='Mes', y=categorias_bancos["Débito"], markers=True, title="Evolución Acumulada de Cuentas Corrientes")
             st.plotly_chart(fig_bancos, use_container_width=True)
 
 # --- MÓDULO 3: DASHBOARD ---
@@ -274,12 +281,12 @@ elif menu == "🔮 Proyecciones y Tarjetas":
         with st.expander("➕ Agregar nueva compra manual", expanded=False):
             c1, c2, c3, c4 = st.columns(4)
             with c1: nueva_compra = st.text_input("Concepto")
-            with c2: valor_cuota = st.number_input("Valor Cuota ($)", step=5000.0, format="%.0f")
+            with c2: valor_cuota = st.number_input("Valor Cuota ($)", step=5000)
             with c3: cuotas_totales = st.number_input("Total Cuotas", min_value=1, step=1)
             with c4: cuotas_faltantes = st.number_input("Faltan por pagar", min_value=1, step=1)
             if st.button("Agregar a la tarjeta"):
                 if nueva_compra:
-                    compras_cuotas[nueva_compra] = {"cuota": float(valor_cuota), "totales": int(cuotas_totales), "restantes": int(cuotas_faltantes)}
+                    compras_cuotas[nueva_compra] = {"cuota": limpiar_numero(valor_cuota), "totales": int(cuotas_totales), "restantes": int(cuotas_faltantes)}
                     coleccion_config.document("compras_cuotas").set(compras_cuotas)
                     st.rerun()
                     
@@ -317,7 +324,7 @@ elif menu == "⚙️ Configuración y Cargas":
         for tipo, lista_cats in categorias.items():
             cols = st.columns(2)
             for idx, cat in enumerate(lista_cats):
-                with cols[idx % 2]: nuevo_presupuesto[cat] = st.number_input(f"Meta/Límite de {cat}", value=limpiar_numero(nuevo_presupuesto.get(cat, 0)), step=5000.0, format="%.0f", key=f"p_{cat}")
+                with cols[idx % 2]: nuevo_presupuesto[cat] = st.number_input(f"Meta/Límite de {cat}", value=limpiar_numero(nuevo_presupuesto.get(cat, 0)), step=5000, key=f"p_{cat}")
         if st.button("Guardar Presupuesto", use_container_width=True):
             coleccion_config.document("presupuesto_base").set(nuevo_presupuesto)
             st.success("¡Presupuesto actualizado!")
@@ -326,26 +333,15 @@ elif menu == "⚙️ Configuración y Cargas":
     st.subheader("➕ 2. Crear Apartados de Flujo Mensual")
     col_tipo_g, col_nombre_g = st.columns(2)
     with col_tipo_g: nueva_cat_tipo = st.selectbox("¿En qué pilar irá?", ["Ingresos", "Gastos Fijos", "Gastos Emergentes"])
-    with col_nombre_g: nueva_cat_nombre = st.text_input("Nombre (Ej: Gimnasio, Restaurantes)")
+    with col_nombre_g: nueva_cat_nombre = st.text_input("Nombre (Ej: Gimnasio)")
     if st.button("Crear Nueva Categoría"):
         if nueva_cat_nombre and nueva_cat_nombre not in categorias[nueva_cat_tipo]:
             categorias[nueva_cat_tipo].append(nueva_cat_nombre)
             coleccion_config.document("categorias").set(categorias)
             st.rerun()
-
-    st.divider()
-    st.subheader("🏦 3. Personalizar Cuentas y Tarjetas")
-    col_tipo_banco, col_nom_banco = st.columns(2)
-    with col_tipo_banco: tipo_banco = st.selectbox("Tipo", ["Débito", "Crédito"])
-    with col_nom_banco: nombre_banco = st.text_input("Nombre (Ej: TC Scotiabank)")
-    if st.button("Agregar Producto Bancario"):
-        if nombre_banco and nombre_banco not in categorias_bancos[tipo_banco]:
-            categorias_bancos[tipo_banco].append(nombre_banco)
-            coleccion_config.document("categorias_bancos").set(categorias_bancos)
-            st.rerun()
             
     st.divider()
-    st.subheader("📥 4. Cargas Masivas de Excel (.xlsx)")
+    st.subheader("📥 3. Cargas Masivas de Excel (.xlsx)")
     tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo (Ingresos y Gastos)", "2️⃣ Deudas en Cuotas", "3️⃣ Ingresos/Egresos de Bancos"])
     
     with tab_hist:
@@ -383,7 +379,7 @@ elif menu == "⚙️ Configuración y Cargas":
         for tar in categorias_bancos["Crédito"]: columnas_bancos.extend([f"{tar}_Pagos", f"{tar}_Compras"])
         
         df_plantilla_bancos = pd.DataFrame(columns=columnas_bancos)
-        st.download_button("Descargar Plantilla Bancos (Excel)", data=convertir_a_excel(df_plantilla_bancos), file_name="Historial_Bancos_Calculado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Descargar Plantilla Bancos (Excel)", data=convertir_a_excel(df_plantilla_bancos), file_name="Historial_Bancos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         arch_bancos = st.file_uploader("Subir Excel de Bancos", type=["xlsx", "xls", "csv"], key="arch_bancos")
         if arch_bancos:
             try:
@@ -398,5 +394,5 @@ elif menu == "⚙️ Configuración y Cargas":
                             datos_bancos_limpios[f"{tar}_ingresos"] = limpiar_numero(row.get(f"{tar}_Pagos", 0))
                             datos_bancos_limpios[f"{tar}_egresos"] = limpiar_numero(row.get(f"{tar}_Compras", 0))
                         coleccion_historial_bancos.document(str(row['Mes_Anio'])).set(datos_bancos_limpios)
-                st.success("¡Historial de bancos cargado! Se han recalculado todos tus saldos.")
+                st.success("¡Historial de bancos cargado! Se han recalculado todos tus saldos de Banco Estado y Chile.")
             except Exception as e: st.error(f"Error al leer: {e}")
