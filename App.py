@@ -5,12 +5,20 @@ from datetime import datetime
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
+from io import BytesIO
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Finanzas Pro", page_icon="📈", layout="wide")
 
 def clp(valor):
     return f"${int(valor):,}".replace(",", ".")
+
+# --- MOTOR DE EXCEL ---
+def convertir_a_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Plantilla')
+    return output.getvalue()
 
 # --- CONEXIÓN A GOOGLE CLOUD FIRESTORE ---
 @st.cache_resource
@@ -44,7 +52,6 @@ doc_bancos_cat = coleccion_config.document("categorias_bancos").get()
 if doc_bancos_cat.exists:
     categorias_bancos = doc_bancos_cat.to_dict()
 else:
-    # Pre-configurado para 2 cuentas corrientes
     categorias_bancos = {"Débito": ["Cuenta Corriente Banco 1", "Cuenta Corriente Banco 2", "Cuenta RUT", "Ahorros"], "Crédito": ["Tarjeta de Crédito Principal"]}
     coleccion_config.document("categorias_bancos").set(categorias_bancos)
 
@@ -54,7 +61,6 @@ presupuesto_base = doc_presupuesto.to_dict() if doc_presupuesto.exists else {}
 doc_tarjetas = coleccion_config.document("compras_cuotas").get()
 compras_cuotas = doc_tarjetas.to_dict() if doc_tarjetas.exists else {}
 
-# Determinar mes actual para llaves
 meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 mes_actual = datetime.now().month - 1
 anio_actual = datetime.now().year
@@ -108,7 +114,6 @@ if menu == "📝 Flujo Mensual (Registro)":
 elif menu == "🏦 Cuentas, Bancos y Evolución":
     st.title("🏦 Cuentas y Tarjetas")
     
-    # Cargar saldo actual y el historial completo
     doc_bancos = coleccion_bancos.document("saldos_actuales").get()
     bancos = doc_bancos.to_dict() if doc_bancos.exists else {}
     
@@ -138,7 +143,6 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
         c3.metric("Patrimonio Neto", clp(patrimonio_neto))
         
         if st.button("💾 Actualizar Saldos Actuales", use_container_width=True):
-            # Guarda el saldo actual y también crea un registro histórico para el mes en curso
             coleccion_bancos.document("saldos_actuales").set(bancos)
             coleccion_historial_bancos.document(llave_mes_actual).set(bancos)
             st.success("Saldos actualizados y guardados en el historial de este mes.")
@@ -146,9 +150,8 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
     with t_grafico:
         st.subheader("Evolución de tus Cuentas Corrientes")
         if not historial_bancos_data:
-            st.info("Aún no hay historial suficiente. Guarda tus saldos actuales o carga el Excel histórico.")
+            st.info("Aún no hay historial suficiente.")
         else:
-            # Prepara datos para el gráfico
             filas_bancos = []
             for mes_anio, datos_banco in historial_bancos_data.items():
                 fila = {'Mes': mes_anio}
@@ -157,8 +160,6 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
                 filas_bancos.append(fila)
                 
             df_bancos = pd.DataFrame(filas_bancos)
-            
-            # Gráfico solo de las cuentas de débito para ver la liquidez
             cuentas_corrientes = [cta for cta in categorias_bancos["Débito"] if "Cuenta" in cta or "Banco" in cta]
             if cuentas_corrientes:
                 fig_bancos = px.line(df_bancos, x='Mes', y=cuentas_corrientes, markers=True,
@@ -224,7 +225,6 @@ elif menu == "⚙️ Configuración y Cargas":
     st.title("⚙️ Configuración y Cargas Masivas")
     
     st.subheader("🏦 Personalizar Cuentas y Tarjetas")
-    st.markdown("Añade tus cuentas corrientes específicas antes de bajar las plantillas.")
     col_tipo_banco, col_nom_banco = st.columns(2)
     with col_tipo_banco:
         tipo_banco = st.selectbox("Tipo", ["Débito", "Crédito"])
@@ -239,45 +239,6 @@ elif menu == "⚙️ Configuración y Cargas":
             
     st.divider()
     
-    st.subheader("📥 Cargas Masivas desde Excel (CSV)")
+    st.subheader("📥 Cargas Masivas (Compatible con Excel .xlsx)")
     tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo (Ingresos/Gastos)", "2️⃣ Deudas en Cuotas", "3️⃣ Saldos de Bancos"])
     
-    with tab_hist:
-        todas_columnas = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Fijos"] + categorias["Auto"] + categorias["Vida"]
-        df_plantilla = pd.DataFrame(columns=todas_columnas)
-        df_plantilla.loc[0] = ["Enero_2026"] + [0] * (len(todas_columnas) - 1)
-        st.download_button("Descargar Plantilla Flujo", data=df_plantilla.to_csv(index=False).encode('utf-8'), file_name="Flujo.csv", mime="text/csv")
-        arch_hist = st.file_uploader("Subir Flujo CSV", type=["csv"], key="hist")
-        if arch_hist:
-            df_subido = pd.read_csv(arch_hist)
-            for _, row in df_subido.iterrows():
-                if str(row['Mes_Anio']) != 'nan':
-                    coleccion_historial.document(str(row['Mes_Anio'])).set(row.drop('Mes_Anio').fillna(0).to_dict())
-            st.success("¡Flujo cargado!")
-
-    with tab_deuda:
-        df_plantilla_deudas = pd.DataFrame(columns=["Concepto", "Cuota_Mensual", "Totales", "Restantes"])
-        df_plantilla_deudas.loc[0] = ["Ej: Notebook", 25000, 12, 5]
-        st.download_button("Descargar Plantilla Deudas", data=df_plantilla_deudas.to_csv(index=False).encode('utf-8'), file_name="Deudas.csv", mime="text/csv")
-        arch_deuda = st.file_uploader("Subir Deudas CSV", type=["csv"], key="deuda")
-        if arch_deuda:
-            df_deudas = pd.read_csv(arch_deuda)
-            for _, row in df_deudas.iterrows():
-                if str(row['Concepto']) != 'nan':
-                    compras_cuotas[str(row['Concepto'])] = {"cuota": float(row['Cuota_Mensual']), "totales": int(row['Totales']), "restantes": int(row['Restantes'])}
-            coleccion_config.document("compras_cuotas").set(compras_cuotas)
-            st.success("¡Deudas importadas!")
-            
-    with tab_bancos:
-        st.markdown("Sube el historial mensual del saldo que tenías en tus cuentas.")
-        columnas_bancos = ["Mes_Anio"] + categorias_bancos["Débito"] + categorias_bancos["Crédito"]
-        df_plantilla_bancos = pd.DataFrame(columns=columnas_bancos)
-        df_plantilla_bancos.loc[0] = ["Enero_2026"] + [0] * (len(columnas_bancos) - 1)
-        st.download_button("Descargar Plantilla Bancos", data=df_plantilla_bancos.to_csv(index=False).encode('utf-8'), file_name="Historial_Bancos.csv", mime="text/csv")
-        arch_bancos = st.file_uploader("Subir Bancos CSV", type=["csv"], key="arch_bancos")
-        if arch_bancos:
-            df_subido_b = pd.read_csv(arch_bancos)
-            for _, row in df_subido_b.iterrows():
-                if str(row['Mes_Anio']) != 'nan':
-                    coleccion_historial_bancos.document(str(row['Mes_Anio'])).set(row.drop('Mes_Anio').fillna(0).to_dict())
-            st.success("¡Historial de bancos cargado! Revisa el gráfico en la pestaña de Cuentas.")
