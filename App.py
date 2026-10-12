@@ -242,3 +242,50 @@ elif menu == "⚙️ Configuración y Cargas":
     st.subheader("📥 Cargas Masivas (Compatible con Excel .xlsx)")
     tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo (Ingresos/Gastos)", "2️⃣ Deudas en Cuotas", "3️⃣ Saldos de Bancos"])
     
+    with tab_hist:
+        todas_columnas = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Fijos"] + categorias["Auto"] + categorias["Vida"]
+        df_plantilla = pd.DataFrame(columns=todas_columnas)
+        df_plantilla.loc[0] = ["Enero_2026"] + [0] * (len(todas_columnas) - 1)
+        st.download_button("Descargar Plantilla Flujo (Excel)", data=convertir_a_excel(df_plantilla), file_name="Flujo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        arch_hist = st.file_uploader("Subir Excel de Flujo", type=["xlsx", "xls", "csv"], key="hist")
+        if arch_hist:
+            try:
+                df_subido = pd.read_csv(arch_hist) if arch_hist.name.endswith('.csv') else pd.read_excel(arch_hist, engine='openpyxl')
+                for _, row in df_subido.iterrows():
+                    if str(row['Mes_Anio']) != 'nan':
+                        coleccion_historial.document(str(row['Mes_Anio'])).set(row.drop('Mes_Anio').fillna(0).to_dict())
+                st.success("¡Flujo cargado!")
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {e}")
+
+    with tab_deuda:
+        df_plantilla_deudas = pd.DataFrame(columns=["Concepto", "Cuota_Mensual", "Totales", "Restantes"])
+        df_plantilla_deudas.loc[0] = ["Ej: Notebook", 25000, 12, 5]
+        st.download_button("Descargar Plantilla Deudas (Excel)", data=convertir_a_excel(df_plantilla_deudas), file_name="Deudas.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        arch_deuda = st.file_uploader("Subir Excel de Deudas", type=["xlsx", "xls", "csv"], key="deuda")
+        if arch_deuda:
+            try:
+                df_deudas = pd.read_csv(arch_deuda) if arch_deuda.name.endswith('.csv') else pd.read_excel(arch_deuda, engine='openpyxl')
+                for _, row in df_deudas.iterrows():
+                    if str(row['Concepto']) != 'nan':
+                        compras_cuotas[str(row['Concepto'])] = {"cuota": float(row['Cuota_Mensual']), "totales": int(row['Totales']), "restantes": int(row['Restantes'])}
+                coleccion_config.document("compras_cuotas").set(compras_cuotas)
+                st.success("¡Deudas importadas!")
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {e}")
+            
+    with tab_bancos:
+        columnas_bancos = ["Mes_Anio"] + categorias_bancos["Débito"] + categorias_bancos["Crédito"]
+        df_plantilla_bancos = pd.DataFrame(columns=columnas_bancos)
+        df_plantilla_bancos.loc[0] = ["Enero_2026"] + [0] * (len(columnas_bancos) - 1)
+        st.download_button("Descargar Plantilla Bancos (Excel)", data=convertir_a_excel(df_plantilla_bancos), file_name="Historial_Bancos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        arch_bancos = st.file_uploader("Subir Excel de Bancos", type=["xlsx", "xls", "csv"], key="arch_bancos")
+        if arch_bancos:
+            try:
+                df_subido_b = pd.read_csv(arch_bancos) if arch_bancos.name.endswith('.csv') else pd.read_excel(arch_bancos, engine='openpyxl')
+                for _, row in df_subido_b.iterrows():
+                    if str(row['Mes_Anio']) != 'nan':
+                        coleccion_historial_bancos.document(str(row['Mes_Anio'])).set(row.drop('Mes_Anio').fillna(0).to_dict())
+                st.success("¡Historial de bancos cargado! Revisa el gráfico en la pestaña de Cuentas.")
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {e}")
