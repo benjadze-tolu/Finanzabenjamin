@@ -6,6 +6,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from io import BytesIO
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Finanzas Pro", page_icon="📈", layout="wide")
@@ -16,44 +17,35 @@ def clp(valor):
     except:
         return "$0"
 
-# --- MOTOR SANITIZADOR DE NÚMEROS (ANTI-ERRORES EXCEL) ---
+# --- MOTOR SANITIZADOR BLINDADO (ANTI-ERRORES EXCEL) ---
 def limpiar_numero(val):
     if pd.isna(val) or val is None or val == '': return 0
     if isinstance(val, (int, float)): return int(val)
     
-    val_str = str(val).replace('$', '').replace(' ', '').strip()
+    val_str = str(val).strip()
+    is_negative = val_str.startswith('-') or val_str.startswith('-$')
+    
+    # Limpiar símbolos irrelevantes
+    val_str = val_str.replace('$', '').replace(' ', '').replace('CLP', '').replace('-', '')
     if not val_str: return 0
     
-    try:
-        return int(float(val_str))
-    except ValueError:
-        pass
-        
-    has_dot = '.' in val_str
-    has_comma = ',' in val_str
+    # Detectar decimales (si hay 1 o 2 números después del último separador)
+    last_dot = val_str.rfind('.')
+    last_comma = val_str.rfind(',')
+    last_sep = max(last_dot, last_comma)
     
-    if has_dot and has_comma:
-        last_dot = val_str.rfind('.')
-        last_comma = val_str.rfind(',')
-        if last_dot > last_comma:
-            val_str = val_str.replace(',', '')
-            return int(float(val_str))
-        else:
-            val_str = val_str.replace('.', '').replace(',', '.')
-            return int(float(val_str))
-    elif has_dot:
-        if val_str.count('.') > 1 or len(val_str.split('.')[-1]) == 3:
-            return int(val_str.replace('.', ''))
-        else:
-            return int(float(val_str))
-    elif has_comma:
-        if val_str.count(',') > 1 or len(val_str.split(',')[-1]) == 3:
-            return int(val_str.replace(',', ''))
-        else:
-            return int(float(val_str.replace(',', '.')))
-    else:
-        try: return int(val_str)
-        except: return 0
+    if last_sep != -1:
+        if len(val_str) - last_sep - 1 in [1, 2]:
+            val_str = val_str[:last_sep] # Recortar decimales
+            
+    # Eliminar todos los puntos y comas restantes (que serían los separadores de miles)
+    val_str = re.sub(r'[.,]', '', val_str)
+    
+    try: 
+        num = int(val_str)
+        return -num if is_negative else num
+    except: 
+        return 0
 
 def convertir_a_excel(df):
     output = BytesIO()
@@ -74,7 +66,6 @@ mes_actual_idx = datetime.now().month - 1
 anio_actual = datetime.now().year
 llave_mes_actual = f"{meses_lista[mes_actual_idx]}_{anio_actual}"
 
-# Nombres dinámicos para los próximos 6 meses
 nombres_meses_futuros = []
 for i in range(1, 7):
     idx = (mes_actual_idx + i) % 12
@@ -98,13 +89,14 @@ coleccion_config = db.collection("configuracion")
 # --- CARGA Y LIMPIEZA DE CATEGORÍAS ---
 doc_config = coleccion_config.document("categorias").get()
 categorias = doc_config.to_dict() if doc_config.exists else {
-    "Ingresos": ["Sueldo COSAM", "Turnos Extras", "Bonos Institucionales / Aguinaldos", "Otros Ingresos"],
-    "Gastos Fijos": ["Arriendo / Dividendo", "Gastos Comunes", "Cuentas Básicas (Luz, Agua, Gas, Internet)", "Supermercado (Alimentación Base)", "Seguro Auto", "Suscripciones (Gym, Streaming)"],
-    "Gastos Emergentes": ["Bencina y Transporte", "TAG y Peajes", "Gastos del Gato (Comida, arena, vet)", "Salidas, Citas y Ocio", "Salud y Farmacia", "Decoración y Mantención Hogar", "Mantención Auto (Repuestos, mecánicos)", "Cuidado Personal (Ropa, Barbería)", "Imprevistos y Emergencias"]
+    "Ingresos": ["Sueldo COSAM", "Turnos Extras", "Otros Ingresos"],
+    "Gastos Fijos": ["Arriendo / Dividendo", "Gastos Comunes", "Cuentas Básicas (Luz, Agua, Gas, Internet)", "Supermercado (Alimentación Base)", "Seguro Auto", "Suscripciones Mensuales"],
+    "Gastos Emergentes": ["Bencina y Transporte", "TAG y Peajes", "Gastos del Gato (Comida, arena, vet)", "Citas, Salidas y Ocio", "Salud y Farmacia", "Decoración y Mantención Hogar", "Mantención Auto (Repuestos, Lavado)", "Cuidado Personal (Barbería, Ropa)", "Imprevistos"]
 }
 for k in categorias: categorias[k] = list(dict.fromkeys(categorias[k]))
 coleccion_config.document("categorias").set(categorias)
 
+# --- BANCOS FIJOS Y BLINDADOS ---
 categorias_bancos = {
     "Débito": ["Cta. Corriente Banco Estado", "Cta. Corriente Banco de Chile"], 
     "Crédito": ["TC Banco de Chile Nacional", "TC Banco de Chile Internacional"]
@@ -138,7 +130,7 @@ menu = st.sidebar.radio("Navegación", [
     "📊 Dashboard: Planeado vs Real", 
     "📝 Flujo Mensual (Registro)", 
     "🏦 Cuentas, Bancos y Evolución",
-    "🔮 Proyecciones y Tarjetas",
+    "🔮 Proyecciones Mensuales Detalladas",
     "⚙️ Configuración y Cargas"
 ])
 st.sidebar.divider()
@@ -167,7 +159,7 @@ if menu == "📝 Flujo Mensual (Registro)":
                 datos[cat] = st.number_input(label, value=valor_actual, step=5000, key=f"{llave_mes}_{cat}")
                 
                 if tipo != "Ingresos" and meta > 0 and datos[cat] > meta:
-                    st.error(f"⚠️ Superaste el presupuesto planificado en {clp(datos[cat] - meta)}")
+                    st.error(f"⚠️ Superaste el presupuesto en {clp(datos[cat] - meta)}")
     
     if st.button("💾 Guardar Mes", use_container_width=True):
         coleccion_historial.document(llave_mes).set(datos)
@@ -180,7 +172,7 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
     t_reg, t_bal, t_graf = st.tabs(["📝 Registrar Movimientos", "⚖️ Balance Calculado", "📈 Evolución Histórica"])
     
     with t_reg:
-        st.info("Anota el dinero que ENTRO y SALIÓ. El sistema calculará tu saldo real.")
+        st.info("Anota el dinero que ENTRÓ y SALIÓ. El sistema calculará tu saldo real.")
         col_m_b, col_a_b = st.columns(2)
         with col_m_b: m_sel = st.selectbox("Mes", meses_lista, index=mes_actual_idx, key="mb")
         with col_a_b: a_sel = st.selectbox("Año", [2025, 2026, 2027], index=1, key="ab")
@@ -200,9 +192,9 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
             st.markdown(f"**{tarjeta}**")
             c1, c2 = st.columns(2)
             with c1: datos_mes_banco[f"{tarjeta}_ingresos"] = st.number_input(f"Pagos a la Tarjeta", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_ingresos", 0)), step=10000, key=f"{llave_b}_{tarjeta}_i")
-            with c2: datos_mes_banco[f"{tarjeta}_egresos"] = st.number_input(f"Nuevas Compras", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_egresos", 0)), step=10000, key=f"{llave_b}_{tarjeta}_e")
+            with c2: datos_mes_banco[f"{tarjeta}_egresos"] = st.number_input(f"Nuevas Compras / Facturación", value=limpiar_numero(datos_mes_banco.get(f"{tarjeta}_egresos", 0)), step=10000, key=f"{llave_b}_{tarjeta}_e")
             
-        if st.button("💾 Guardar Movimientos", use_container_width=True):
+        if st.button("💾 Guardar Movimientos Bancarios", use_container_width=True):
             coleccion_historial_bancos.document(llave_b).set(datos_mes_banco)
             st.success("¡Movimientos guardados!")
             st.rerun()
@@ -254,7 +246,6 @@ elif menu == "📊 Dashboard: Planeado vs Real":
     
     if not historial: st.info("No hay datos históricos.")
     else:
-        # Orden cronológico para el selector
         meses_ordenados = sorted(list(historial.keys()), key=mes_a_fecha)
         mes_analisis = st.selectbox("Selecciona un mes", meses_ordenados, index=len(meses_ordenados)-1)
         datos_mes = historial[mes_analisis]
@@ -270,51 +261,88 @@ elif menu == "📊 Dashboard: Planeado vs Real":
         c1, c2, c3 = st.columns(3)
         c1.metric("Ingresos Reales", clp(ing_real), delta=f"Proyectado: {clp(ing_plan)}")
         c2.metric("Gastos Reales", clp(gas_total_real), delta=f"Límite: {clp(gas_plan)}", delta_color="inverse" if gas_total_real > gas_plan else "normal")
-        c3.metric("Ahorro Neto Real", clp(ing_real - gas_total_real))
-
-# --- MÓDULO 4: PROYECCIONES Y TARJETAS ---
-elif menu == "🔮 Proyecciones y Tarjetas":
-    st.title("🔮 Proyección de Cuotas")
-    
-    t_meses, t_detalle = st.tabs(["🗓️ Deuda a Pagar (Próximos 6 Meses)", "💳 Gestión de Cuotas"])
-    
-    with t_meses:
-        st.subheader("Dinero requerido para facturación de TC")
-        cols = st.columns(6)
-        for idx, mes_offset in enumerate(range(1, 7)):
-            pago_mes = sum(limpiar_numero(det['cuota']) for det in compras_cuotas.values() if limpiar_numero(det['restantes']) >= mes_offset)
-            nombre_m = nombres_meses_futuros[idx]
-            cols[idx].metric(nombre_m, clp(pago_mes))
-            
+        c3.metric("Flujo Neto Real", clp(ing_real - gas_total_real))
+        
         st.divider()
-        st.subheader("Gráfico de Flujo Proyectado")
+        col_graf1, col_graf2 = st.columns(2)
+        with col_graf1:
+            df_torta = pd.DataFrame({'Categoría': ['Gastos Fijos', 'Gastos Emergentes'], 'Monto': [gas_fijo_real, gas_emergente_real]})
+            fig_pie = px.pie(df_torta, values='Monto', names='Categoría', hole=0.4, title="Estructura de Gastos")
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_graf2:
+            st.subheader("Estado del Presupuesto")
+            st.markdown(f"**Límite de Gasto Total:** {clp(gas_plan)}")
+            st.markdown(f"**Gastado hasta ahora:** {clp(gas_total_real)}")
+            if gas_plan > 0:
+                porcentaje = min((gas_total_real / gas_plan) * 100, 100)
+                st.progress(porcentaje / 100, text=f"Has consumido el {porcentaje:.1f}% de tu presupuesto mensual.")
+
+# --- MÓDULO 4: PROYECCIONES Y TARJETAS (NUEVA LÍNEA DE TIEMPO) ---
+elif menu == "🔮 Proyecciones Mensuales Detalladas":
+    st.title("🔮 Proyección y Cronograma de Cuotas")
+    
+    t_timeline, t_gestion = st.tabs(["📅 Línea de Tiempo (6 Meses)", "💳 Ingresar Deudas"])
+    
+    with t_timeline:
+        st.markdown("### Cronograma de Facturación de Tarjetas")
+        st.info("Despliega cada mes para ver el detalle exacto de las compras que te serán cobradas.")
+        
         gas_fijo_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Gastos Fijos"])
         ing_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Ingresos"])
         
         proy_datos = []
         for idx, mes_offset in enumerate(range(1, 7)):
-            pago_tarjeta_mes = sum(limpiar_numero(det['cuota']) for det in compras_cuotas.values() if limpiar_numero(det['restantes']) >= mes_offset)
-            proy_datos.append({'Mes': nombres_meses_futuros[idx], 'Gastos Fijos (Supervivencia)': gas_fijo_plan, 'Cuotas TC': pago_tarjeta_mes, 'Ingresos': ing_plan})
-        
+            nombre_m = nombres_meses_futuros[idx]
+            
+            # Filtrar compras que siguen activas en este mes futuro
+            compras_del_mes = {k: v for k, v in compras_cuotas.items() if limpiar_numero(v['restantes']) >= mes_offset}
+            total_tc_mes = sum(limpiar_numero(det['cuota']) for det in compras_del_mes.values())
+            
+            # Calcular flujo
+            flujo_libre = ing_plan - (gas_fijo_plan + total_tc_mes)
+            
+            proy_datos.append({'Mes': nombre_m, 'Supervivencia Fija': gas_fijo_plan, 'Tarjetas': total_tc_mes, 'Ingresos': ing_plan})
+            
+            # Crear un panel detallado para el mes
+            with st.expander(f"📌 {nombre_m} | Deuda a Pagar: {clp(total_tc_mes)}", expanded=(idx==0)):
+                if not compras_del_mes:
+                    st.success("¡Mes libre de deudas de tarjeta de crédito!")
+                else:
+                    for item, det in compras_del_mes.items():
+                        tot = int(limpiar_numero(det['totales']))
+                        rest_actual = int(limpiar_numero(det['restantes']))
+                        # En qué cuota irá en ese mes específico
+                        cuota_en_ese_mes = (tot - rest_actual) + mes_offset
+                        st.markdown(f"- **{item}**: {clp(det['cuota'])} *(Cuota {cuota_en_ese_mes} de {tot})*")
+                
+                st.divider()
+                st.markdown(f"**Ingresos Proyectados:** {clp(ing_plan)}")
+                st.markdown(f"**Gastos Fijos Proyectados:** -{clp(gas_fijo_plan)}")
+                st.markdown(f"**Margen Libre Estimado:** **{clp(flujo_libre)}** (Para gastos emergentes y ahorro)")
+
+        st.divider()
+        st.subheader("Gráfico General de Carga Financiera")
         df_proy = pd.DataFrame(proy_datos)
-        fig_proy = px.bar(df_proy, x='Mes', y=['Gastos Fijos (Supervivencia)', 'Cuotas TC'], title="Proyección de Gastos vs Ingresos", color_discrete_map={'Gastos Fijos (Supervivencia)': '#1f77b4', 'Cuotas TC': '#ff7f0e'})
-        fig_proy.add_scatter(x=df_proy['Mes'], y=df_proy['Ingresos'], mode='lines+markers', name='Ingresos Proy.', marker=dict(color='green', size=10))
+        fig_proy = px.bar(df_proy, x='Mes', y=['Supervivencia Fija', 'Tarjetas'], color_discrete_map={'Supervivencia Fija': '#1f77b4', 'Tarjetas': '#ff7f0e'})
+        fig_proy.add_scatter(x=df_proy['Mes'], y=df_proy['Ingresos'], mode='lines+markers', name='Ingresos Est.', marker=dict(color='green', size=10))
         st.plotly_chart(fig_proy, use_container_width=True)
 
-    with t_detalle:
-        with st.expander("➕ Agregar nueva compra manual", expanded=False):
+    with t_gestion:
+        with st.expander("➕ Cargar Nueva Compra a la Tarjeta", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
-            with c1: nueva_compra = st.text_input("Concepto")
+            with c1: nueva_compra = st.text_input("Concepto / Producto")
             with c2: valor_cuota = st.number_input("Valor Cuota ($)", step=5000)
             with c3: cuotas_totales = st.number_input("Total Cuotas", min_value=1, step=1)
             with c4: cuotas_faltantes = st.number_input("Faltan por pagar", min_value=1, step=1)
-            if st.button("Agregar a la tarjeta"):
+            if st.button("Agregar a Cronograma"):
                 if nueva_compra:
                     compras_cuotas[nueva_compra] = {"cuota": limpiar_numero(valor_cuota), "totales": int(cuotas_totales), "restantes": int(cuotas_faltantes)}
                     coleccion_config.document("compras_cuotas").set(compras_cuotas)
+                    st.success("Compra ingresada.")
                     st.rerun()
                     
-        st.subheader("Gestión de Deudas Activas")
+        st.subheader("Modificar Deudas Actuales")
         for item, det in list(compras_cuotas.items()):
             tot = int(limpiar_numero(det['totales']))
             rest = int(limpiar_numero(det['restantes']))
@@ -354,7 +382,7 @@ elif menu == "⚙️ Configuración y Cargas":
             
     st.divider()
     st.subheader("📥 3. Cargas Masivas de Excel (.xlsx)")
-    tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo (Ingresos y Gastos)", "2️⃣ Deudas en Cuotas", "3️⃣ Ingresos/Egresos de Bancos"])
+    tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo Mensual", "2️⃣ Deudas en Cuotas", "3️⃣ Ingresos/Egresos de Bancos"])
     
     with tab_hist:
         todas_columnas = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Gastos Fijos"] + categorias["Gastos Emergentes"]
@@ -368,7 +396,7 @@ elif menu == "⚙️ Configuración y Cargas":
                     if str(row['Mes_Anio']) != 'nan':
                         datos_limpios = {k: limpiar_numero(v) for k, v in row.drop('Mes_Anio').fillna(0).to_dict().items()}
                         coleccion_historial.document(str(row['Mes_Anio'])).set(datos_limpios)
-                st.success("¡Flujo histórico cargado correctamente!")
+                st.success("¡Flujo histórico procesado limpiamente!")
             except Exception as e: st.error(f"Error al leer: {e}")
 
     with tab_deuda:
@@ -388,7 +416,7 @@ elif menu == "⚙️ Configuración y Cargas":
     with tab_bancos:
         columnas_bancos = ["Mes_Anio"]
         for cta in categorias_bancos["Débito"]: columnas_bancos.extend([f"{cta}_Ingresos", f"{cta}_Egresos"])
-        for tar in categorias_bancos["Crédito"]: columnas_bancos.extend([f"{tar}_Pagos", f"{tar}_Compras"])
+        for tar in categorias_bancos["Crédito"]: columnas_bancos.extend([f"{tar}_ingresos", f"{tar}_egresos"])
         
         df_plantilla_bancos = pd.DataFrame(columns=columnas_bancos)
         st.download_button("Descargar Plantilla Bancos", data=convertir_a_excel(df_plantilla_bancos), file_name="Historial_Bancos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -403,8 +431,8 @@ elif menu == "⚙️ Configuración y Cargas":
                             datos_bancos_limpios[f"{cta}_ingresos"] = limpiar_numero(row.get(f"{cta}_Ingresos", 0))
                             datos_bancos_limpios[f"{cta}_egresos"] = limpiar_numero(row.get(f"{cta}_Egresos", 0))
                         for tar in categorias_bancos["Crédito"]:
-                            datos_bancos_limpios[f"{tar}_ingresos"] = limpiar_numero(row.get(f"{tar}_Pagos", 0))
-                            datos_bancos_limpios[f"{tar}_egresos"] = limpiar_numero(row.get(f"{tar}_Compras", 0))
+                            datos_bancos_limpios[f"{tar}_ingresos"] = limpiar_numero(row.get(f"{tar}_ingresos", 0))
+                            datos_bancos_limpios[f"{tar}_egresos"] = limpiar_numero(row.get(f"{tar}_egresos", 0))
                         coleccion_historial_bancos.document(str(row['Mes_Anio'])).set(datos_bancos_limpios)
-                st.success("¡Historial de bancos cargado! Se han recalculado todos tus saldos.")
+                st.success("¡Historial de bancos cargado! Saldos recalculados.")
             except Exception as e: st.error(f"Error al leer: {e}")
