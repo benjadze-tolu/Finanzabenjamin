@@ -50,30 +50,43 @@ coleccion_bancos = db.collection("bancos")
 coleccion_historial_bancos = db.collection("historial_bancos")
 coleccion_config = db.collection("configuracion")
 
-# --- CARGA Y LIMPIEZA DE CATEGORÍAS ---
-doc_config = coleccion_config.document("categorias").get()
-categorias = doc_config.to_dict() if doc_config.exists else {
-    "Ingresos": ["Sueldo COSAM", "Turnos Extras", "Otros Ingresos"],
-    "Fijos": ["Arriendo", "Cuentas Básicas", "Gastos Comunes", "Supermercado"],
-    "Auto": ["Bencina", "TAG y Peajes", "Seguro Auto", "Mantención Auto"],
-    "Vida": ["Gastos del Gato", "Salud", "Mantención Hogar", "Salidas y Ocio"]
+# --- CARGA Y LIMPIEZA DE CATEGORÍAS ESTRUCTURADAS ---
+# Forzamos la nueva estructura de 3 pilares con parámetros altamente detallados
+categorias = {
+    "Ingresos": [
+        "Sueldo COSAM", 
+        "Turnos Extras", 
+        "Bonos Institucionales / Aguinaldos", 
+        "Otros Ingresos"
+    ],
+    "Gastos Fijos": [
+        "Arriendo / Dividendo", 
+        "Gastos Comunes", 
+        "Cuentas Básicas (Luz, Agua, Gas, Internet)", 
+        "Supermercado (Alimentación Base)", 
+        "Seguro Auto", 
+        "Suscripciones (Gym, Streaming)"
+    ],
+    "Gastos Emergentes": [
+        "Bencina y Transporte", 
+        "TAG y Peajes", 
+        "Gastos del Gato (Comida, arena, vet)", 
+        "Salidas, Citas y Ocio", 
+        "Salud y Farmacia", 
+        "Decoración y Mantención Hogar", 
+        "Mantención Auto (Repuestos, mecánicos)", 
+        "Cuidado Personal (Ropa, Barbería)", 
+        "Imprevistos y Emergencias"
+    ]
 }
-for k in categorias: categorias[k] = list(dict.fromkeys(categorias[k]))
 coleccion_config.document("categorias").set(categorias)
 
-# Configuración específica para bancos chilenos por defecto
 doc_bancos_cat = coleccion_config.document("categorias_bancos").get()
 categorias_bancos = doc_bancos_cat.to_dict() if doc_bancos_cat.exists else {
     "Débito": ["Cta. Corriente Banco de Chile", "Cta. RUT Banco Estado", "Cta. Corriente Banco Estado"], 
     "Crédito": ["TC Banco de Chile", "TC Banco Estado"]
 }
-# Forzar inclusión si faltan las principales (para actualización de usuarios antiguos)
-bancos_default = ["Cta. Corriente Banco de Chile", "Cta. RUT Banco Estado", "Cta. Corriente Banco Estado"]
-tc_default = ["TC Banco de Chile", "TC Banco Estado"]
-for b in bancos_default:
-    if b not in categorias_bancos["Débito"]: categorias_bancos["Débito"].append(b)
-for t in tc_default:
-    if t not in categorias_bancos["Crédito"]: categorias_bancos["Crédito"].append(t)
+# Limpieza de duplicados
 for k in categorias_bancos: categorias_bancos[k] = list(dict.fromkeys(categorias_bancos[k]))
 coleccion_config.document("categorias_bancos").set(categorias_bancos)
 
@@ -113,7 +126,8 @@ if menu == "📝 Flujo Mensual (Registro)":
     doc = doc_ref.get()
     datos = doc.to_dict() if doc.exists else {}
     
-    tabs = st.tabs(["💰 Ingresos", "🏠 Fijos", "🚗 Auto", "☕ Vida"])
+    # Nuevas pestañas estructurales
+    tabs = st.tabs(["💰 Ingresos", "🏠 Gastos Fijos", "🚨 Gastos Emergentes"])
     for i, (tipo, lista_cats) in enumerate(categorias.items()):
         with tabs[i]:
             for cat in lista_cats:
@@ -121,14 +135,16 @@ if menu == "📝 Flujo Mensual (Registro)":
                 meta = limpiar_numero(presupuesto_base.get(cat, 0.0))
                 label = f"{cat} (Presupuesto: {clp(meta)})" if meta > 0 else cat
                 datos[cat] = st.number_input(label, value=valor_actual, step=5000.0, format="%.0f", key=f"{llave_mes}_{cat}")
+                
+                # Alertas si superas el presupuesto en gastos
                 if tipo != "Ingresos" and meta > 0 and datos[cat] > meta:
-                    st.error(f"⚠️ Superaste el presupuesto en {clp(datos[cat] - meta)}")
+                    st.error(f"⚠️ Superaste el presupuesto planificado en {clp(datos[cat] - meta)}")
     
     if st.button("💾 Guardar Mes", use_container_width=True):
         coleccion_historial.document(llave_mes).set(datos)
-        st.success("¡Datos guardados!")
+        st.success("¡Datos guardados con éxito!")
 
-# --- MÓDULO 2: BANCOS Y CUENTAS (DESGLOSE INSTITUCIONAL) ---
+# --- MÓDULO 2: BANCOS Y CUENTAS ---
 elif menu == "🏦 Cuentas, Bancos y Evolución":
     st.title("🏦 Análisis de Patrimonio por Institución")
     doc_bancos = coleccion_bancos.document("saldos_actuales").get()
@@ -155,23 +171,17 @@ elif menu == "🏦 Cuentas, Bancos y Evolución":
 
     with t_bal:
         st.subheader("Desglose Institucional")
-        # Banco de Chile
         chile_liq = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Débito"] if "chile" in k.lower())
         chile_deuda = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Crédito"] if "chile" in k.lower())
-        # Banco Estado
         estado_liq = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Débito"] if "estado" in k.lower())
         estado_deuda = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Crédito"] if "estado" in k.lower())
-        # Otros
         otros_liq = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Débito"] if "chile" not in k.lower() and "estado" not in k.lower())
         otros_deuda = sum(limpiar_numero(bancos.get(k, 0)) for k in categorias_bancos["Crédito"] if "chile" not in k.lower() and "estado" not in k.lower())
         
         col_chile, col_estado, col_otros = st.columns(3)
-        with col_chile:
-            st.info(f"**🏦 Banco de Chile**\n\nLiquidez: {clp(chile_liq)}\n\nDeuda TC: {clp(chile_deuda)}\n\n**Neto: {clp(chile_liq - chile_deuda)}**")
-        with col_estado:
-            st.success(f"**🏦 Banco Estado**\n\nLiquidez: {clp(estado_liq)}\n\nDeuda TC: {clp(estado_deuda)}\n\n**Neto: {clp(estado_liq - estado_deuda)}**")
-        with col_otros:
-            st.warning(f"**🏦 Otras Cuentas**\n\nLiquidez: {clp(otros_liq)}\n\nDeuda TC: {clp(otros_deuda)}\n\n**Neto: {clp(otros_liq - otros_deuda)}**")
+        with col_chile: st.info(f"**🏦 Banco de Chile**\n\nLiquidez: {clp(chile_liq)}\n\nDeuda TC: {clp(chile_deuda)}\n\n**Neto: {clp(chile_liq - chile_deuda)}**")
+        with col_estado: st.success(f"**🏦 Banco Estado**\n\nLiquidez: {clp(estado_liq)}\n\nDeuda TC: {clp(estado_deuda)}\n\n**Neto: {clp(estado_liq - estado_deuda)}**")
+        with col_otros: st.warning(f"**🏦 Otras Cuentas**\n\nLiquidez: {clp(otros_liq)}\n\nDeuda TC: {clp(otros_deuda)}\n\n**Neto: {clp(otros_liq - otros_deuda)}**")
             
         st.divider()
         liquidez_total = chile_liq + estado_liq + otros_liq
@@ -203,25 +213,44 @@ elif menu == "📊 Dashboard: Planeado vs Real":
     else:
         mes_analisis = st.selectbox("Selecciona un mes para analizar", list(historial.keys()), index=len(historial)-1)
         datos_mes = historial[mes_analisis]
+        
+        # Cálculos divididos por los 3 pilares
         ing_real = sum(limpiar_numero(datos_mes.get(c, 0)) for c in categorias["Ingresos"])
-        gas_real = sum(limpiar_numero(datos_mes.get(c, 0)) for c in categorias["Fijos"] + categorias["Auto"] + categorias["Vida"])
+        gas_fijo_real = sum(limpiar_numero(datos_mes.get(c, 0)) for c in categorias["Gastos Fijos"])
+        gas_emergente_real = sum(limpiar_numero(datos_mes.get(c, 0)) for c in categorias["Gastos Emergentes"])
+        gas_total_real = gas_fijo_real + gas_emergente_real
+        
         ing_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Ingresos"])
-        gas_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Fijos"] + categorias["Auto"] + categorias["Vida"])
+        gas_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Gastos Fijos"] + categorias["Gastos Emergentes"])
         
         c1, c2, c3 = st.columns(3)
         c1.metric("Ingresos Reales", clp(ing_real), delta=f"Proyectado: {clp(ing_plan)}")
-        c2.metric("Gastos Reales", clp(gas_real), delta=f"Límite: {clp(gas_plan)}", delta_color="inverse" if gas_real > gas_plan else "normal")
-        c3.metric("Ahorro Neto Real", clp(ing_real - gas_real))
+        c2.metric("Gastos Reales", clp(gas_total_real), delta=f"Límite: {clp(gas_plan)}", delta_color="inverse" if gas_total_real > gas_plan else "normal")
+        c3.metric("Ahorro Neto Real", clp(ing_real - gas_total_real))
+        
+        st.divider()
+        col_graf1, col_graf2 = st.columns(2)
+        with col_graf1:
+            df_torta = pd.DataFrame({'Categoría': ['Gastos Fijos', 'Gastos Emergentes'], 'Monto': [gas_fijo_real, gas_emergente_real]})
+            fig_pie = px.pie(df_torta, values='Monto', names='Categoría', hole=0.4, title="Estructura de Gastos", color_discrete_sequence=['#1f77b4', '#d62728'])
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_graf2:
+            st.subheader("Estado del Presupuesto")
+            st.markdown(f"**Límite de Gasto Total:** {clp(gas_plan)}")
+            st.markdown(f"**Gastado hasta ahora:** {clp(gas_total_real)}")
+            if gas_plan > 0:
+                porcentaje = min((gas_total_real / gas_plan) * 100, 100)
+                st.progress(porcentaje / 100, text=f"Has consumido el {porcentaje:.1f}% de tu presupuesto mensual.")
 
 # --- MÓDULO 4: PROYECCIONES Y TARJETAS ---
 elif menu == "🔮 Proyecciones y Tarjetas":
     st.title("🔮 Proyección y Vencimiento de Cuotas")
     
-    # Análisis de cuotas a vencer este mes
     cuotas_vencer_proximo_mes = {k: v for k, v in compras_cuotas.items() if limpiar_numero(v['restantes']) > 0}
     pago_inmediato = sum(limpiar_numero(det['cuota']) for det in cuotas_vencer_proximo_mes.values())
     
-    st.error(f"🚨 **FACTURACIÓN PROYECTADA TC:** El próximo mes deberás desembolsar **{clp(pago_inmediato)}** para cubrir las cuotas activas.")
+    st.error(f"🚨 **FACTURACIÓN PROYECTADA TC:** El próximo mes deberás desembolsar **{clp(pago_inmediato)}** líquidos para cubrir las cuotas activas de tus tarjetas.")
     
     t_vencimientos, t_simulador = st.tabs(["📅 Detalle de Próximos Vencimientos", "🔭 Simulador a 6 Meses"])
     
@@ -263,19 +292,19 @@ elif menu == "🔮 Proyecciones y Tarjetas":
                 st.rerun()
 
     with t_simulador:
-        gas_fijo_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Fijos"] + categorias["Auto"] + categorias["Vida"])
+        gas_fijo_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Gastos Fijos"])
         ing_plan = sum(limpiar_numero(presupuesto_base.get(c, 0)) for c in categorias["Ingresos"])
         proy_datos = []
         for mes in range(1, 7):
             pago_tarjeta_mes = sum(limpiar_numero(det['cuota']) for det in compras_cuotas.values() if limpiar_numero(det['restantes']) >= mes)
             proy_datos.append({
                 'Mes Futuro': f"Mes {mes}",
-                'Gastos Base (Presupuesto)': gas_fijo_plan,
+                'Gastos Base (Supervivencia)': gas_fijo_plan,
                 'Cuotas Tarjeta': pago_tarjeta_mes,
                 'Ingresos': ing_plan
             })
         df_proy = pd.DataFrame(proy_datos)
-        fig_proy = px.bar(df_proy, x='Mes Futuro', y=['Gastos Base (Presupuesto)', 'Cuotas Tarjeta'], title="Cuánto de tu ingreso se comerán las deudas", color_discrete_map={'Gastos Base (Presupuesto)': '#1f77b4', 'Cuotas Tarjeta': '#ff7f0e'})
+        fig_proy = px.bar(df_proy, x='Mes Futuro', y=['Gastos Base (Supervivencia)', 'Cuotas Tarjeta'], title="Proyección: Cuánto de tu ingreso fijo estará comprometido", color_discrete_map={'Gastos Base (Supervivencia)': '#1f77b4', 'Cuotas Tarjeta': '#ff7f0e'})
         fig_proy.add_scatter(x=df_proy['Mes Futuro'], y=df_proy['Ingresos'], mode='lines+markers', name='Ingresos Proy.', marker=dict(color='green', size=10))
         st.plotly_chart(fig_proy, use_container_width=True)
 
@@ -290,25 +319,25 @@ elif menu == "⚙️ Configuración y Cargas":
             cols = st.columns(2)
             for idx, cat in enumerate(lista_cats):
                 with cols[idx % 2]:
-                    nuevo_presupuesto[cat] = st.number_input(f"Límite {cat}", value=limpiar_numero(nuevo_presupuesto.get(cat, 0)), step=5000.0, format="%.0f", key=f"p_{cat}")
+                    nuevo_presupuesto[cat] = st.number_input(f"Meta/Límite de {cat}", value=limpiar_numero(nuevo_presupuesto.get(cat, 0)), step=5000.0, format="%.0f", key=f"p_{cat}")
         if st.button("Guardar Presupuesto", use_container_width=True):
             coleccion_config.document("presupuesto_base").set(nuevo_presupuesto)
-            st.success("¡Actualizado!")
+            st.success("¡Presupuesto actualizado!")
             
     st.divider()
-    st.subheader("➕ 2. Crear Apartados de Registro Mensual")
+    st.subheader("➕ 2. Crear Apartados de Flujo Mensual")
     col_tipo_g, col_nombre_g = st.columns(2)
-    with col_tipo_g: nueva_cat_tipo = st.selectbox("¿En qué grupo irá?", ["Ingresos", "Fijos", "Auto", "Vida"])
-    with col_nombre_g: nueva_cat_nombre = st.text_input("Nombre (Ej: Gimnasio)")
-    if st.button("Crear Categoría de Gasto"):
+    with col_tipo_g: nueva_cat_tipo = st.selectbox("¿En qué pilar irá?", ["Ingresos", "Gastos Fijos", "Gastos Emergentes"])
+    with col_nombre_g: nueva_cat_nombre = st.text_input("Nombre (Ej: Gimnasio, Restaurantes)")
+    if st.button("Crear Nueva Categoría"):
         if nueva_cat_nombre and nueva_cat_nombre not in categorias[nueva_cat_tipo]:
             categorias[nueva_cat_tipo].append(nueva_cat_nombre)
             coleccion_config.document("categorias").set(categorias)
+            st.success("Opción agregada.")
             st.rerun()
 
     st.divider()
     st.subheader("🏦 3. Personalizar Cuentas y Tarjetas")
-    st.info("Ya están configurados por defecto Banco de Chile y Banco Estado. Agrega otros si lo necesitas.")
     col_tipo_banco, col_nom_banco = st.columns(2)
     with col_tipo_banco: tipo_banco = st.selectbox("Tipo", ["Débito", "Crédito"])
     with col_nom_banco: nombre_banco = st.text_input("Nombre (Ej: TC Scotiabank)")
@@ -316,16 +345,17 @@ elif menu == "⚙️ Configuración y Cargas":
         if nombre_banco and nombre_banco not in categorias_bancos[tipo_banco]:
             categorias_bancos[tipo_banco].append(nombre_banco)
             coleccion_config.document("categorias_bancos").set(categorias_bancos)
+            st.success("¡Producto agregado!")
             st.rerun()
             
     st.divider()
-    st.subheader("📥 4. Cargas Masivas Excel (.xlsx)")
-    tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo Mensual", "2️⃣ Deudas en Cuotas", "3️⃣ Saldos de Bancos"])
+    st.subheader("📥 4. Cargas Masivas de Excel (.xlsx)")
+    tab_hist, tab_deuda, tab_bancos = st.tabs(["1️⃣ Flujo (Ingresos y Gastos)", "2️⃣ Deudas en Cuotas", "3️⃣ Saldos de Bancos"])
     
     with tab_hist:
-        todas_columnas = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Fijos"] + categorias["Auto"] + categorias["Vida"]
+        todas_columnas = ["Mes_Anio"] + categorias["Ingresos"] + categorias["Gastos Fijos"] + categorias["Gastos Emergentes"]
         df_plantilla = pd.DataFrame(columns=todas_columnas)
-        st.download_button("Descargar Plantilla Flujo (Excel)", data=convertir_a_excel(df_plantilla), file_name="Flujo.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Descargar Plantilla Flujo (Excel)", data=convertir_a_excel(df_plantilla), file_name="Flujo_Separado.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         arch_hist = st.file_uploader("Subir Excel de Flujo", type=["xlsx", "xls", "csv"], key="hist")
         if arch_hist:
             try:
